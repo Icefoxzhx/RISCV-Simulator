@@ -28,30 +28,43 @@ class Simulator{
 public:
 	uchar mem[8388608];
 	uint X[32],pc;
+	int tot,suc;
+	struct Predictor{
+		int history;// last two choices 0~3
+		int state[4];// 00--strongly not taken  01--weakly not taken  10--weakly taken 11-strongly taken
+		Predictor(){
+			history=0;
+			memset(state,0,sizeof(state));
+		}
+		bool take(){
+			return state[history]&2;
+		}
+	}pred[32];
+
 	struct _IF_ID{
 		uint IR;
 		uint _pc;
 		_IF_ID(){
-			IR=0;_pc=0;
+			IR=_pc=0;
 		}
 		void clear(){
-			IR=0;_pc=0;
+			IR=_pc=0;
 		}
 		bool empty(){
 			return IR==0;
 		}
 	}IF_ID;
 	struct _ID_EX{
-		uint rs1,rs2,rd,imm,_pc;
+		uint rs1,rs2,rd,imm,_pc,id;//_pc--origin pc   id--predictor id
 		IS_names name;
 		bool done;
 		_ID_EX(){
-			rs1=rs2=rd=imm=_pc=0;
+			rs1=rs2=rd=imm=_pc=id=0;
 			name=NOP;
 			done=false;
 		}
 		void clear(){
-			rs1=rs2=rd=imm=_pc=0;
+			rs1=rs2=rd=imm=_pc=id=0;
 			name=NOP;
 			done=false;
 		}
@@ -109,6 +122,10 @@ public:
 		ID_EX.imm|=((IF_ID.IR>>7u)&1u)<<11u;
 		ID_EX.imm|=((IF_ID.IR>>25u)&63u)<<5u;
 		ID_EX.imm|=((IF_ID.IR>>8u)&15u)<<1u;
+
+		ID_EX.id=(IF_ID._pc>>2u)&31u;
+		++tot;
+		if(pred[ID_EX.id].take()) pc=IF_ID._pc+ID_EX.imm;//taken
 	}
 	void workS(){
 		ID_EX.rs1=(IF_ID.IR>>15u)&31u;
@@ -145,6 +162,7 @@ public:
 					ID_EX.imm |= IF_ID.IR & 0x000ff000;
 					ID_EX.imm |= ((IF_ID.IR >> 20u) & 1u) << 11u;
 					ID_EX.imm |= ((IF_ID.IR >> 21u) & 1023u) << 1u;
+					pc=ID_EX._pc+ID_EX.imm;//taken previously
 					break;
 				case 0x67://JALR
 					ID_EX.name = JALR;
@@ -300,6 +318,7 @@ public:
 		EX_MEM.name=ID_EX.name;
 		EX_MEM.rd=ID_EX.rd;
 		EX_MEM.tim=0;
+		int &state=pred[ID_EX.id].state[pred[ID_EX.id].history];
 		switch(EX_MEM.name){
 			case LB:case LH:case LW:case LBU:case LHU:
 				EX_MEM.res=ID_EX.rs1+ID_EX.imm;break;
@@ -335,15 +354,74 @@ public:
 
 			case LUI:EX_MEM.res=ID_EX.imm;break;
 			case AUIPC:EX_MEM.res=ID_EX.imm+ID_EX._pc;break;
+			case BEQ:
+				if(ID_EX.rs1==ID_EX.rs2){
+					if(state&2) state=3,++suc;//right
+					else pc=ID_EX._pc+ID_EX.imm,IF_ID.clear(),++state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1|1)&3;
+				}else{
+					if(!(state&2)) state=0,++suc;//right
+					else pc=ID_EX._pc+4,IF_ID.clear(),--state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1)&3;
+				}
+				break;
+			case BNE:
+				if(ID_EX.rs1!=ID_EX.rs2){
+					if(state&2) state=3,++suc;//right
+					else pc=ID_EX._pc+ID_EX.imm,IF_ID.clear(),++state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1|1)&3;
+				}else{
+					if(!(state&2)) state=0,++suc;//right
+					else pc=ID_EX._pc+4,IF_ID.clear(),--state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1)&3;
+				}
+				break;
+			case BLT:
+				if((int)ID_EX.rs1<(int)ID_EX.rs2){
+					if(state&2) state=3,++suc;//right
+					else pc=ID_EX._pc+ID_EX.imm,IF_ID.clear(),++state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1|1)&3;
+				}else{
+					if(!(state&2)) state=0,++suc;//right
+					else pc=ID_EX._pc+4,IF_ID.clear(),--state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1)&3;
+				}
+				break;
+			case BGE:
+				if((int)ID_EX.rs1>=(int)ID_EX.rs2){
+					if(state&2) state=3,++suc;//right
+					else pc=ID_EX._pc+ID_EX.imm,IF_ID.clear(),++state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1|1)&3;
+				}else{
+					if(!(state&2)) state=0,++suc;//right
+					else pc=ID_EX._pc+4,IF_ID.clear(),--state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1)&3;
+				}
+				break;
+			case BLTU:
+				if(ID_EX.rs1<ID_EX.rs2){
+					if(state&2) state=3,++suc;//right
+					else pc=ID_EX._pc+ID_EX.imm,IF_ID.clear(),++state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1|1)&3;
+				}else{
+					if(!(state&2)) state=0,++suc;//right
+					else pc=ID_EX._pc+4,IF_ID.clear(),--state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1)&3;
+				}
+				break;
+			case BGEU:
+				if(ID_EX.rs1>=ID_EX.rs2){
+					if(state&2) state=3,++suc;//right
+					else pc=ID_EX._pc+ID_EX.imm,IF_ID.clear(),++state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1|1)&3;
+				}else{
+					if(!(state&2)) state=0,++suc;//right
+					else pc=ID_EX._pc+4,IF_ID.clear(),--state;//wrong
+					pred[ID_EX.id].history=(pred[ID_EX.id].history<<1)&3;
+				}
+				break;
 
-			case BEQ:if(ID_EX.rs1==ID_EX.rs2) pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
-			case BNE:if(ID_EX.rs1!=ID_EX.rs2) pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
-			case BLT:if((int)ID_EX.rs1<(int)ID_EX.rs2) pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
-			case BGE:if((int)ID_EX.rs1>=(int)ID_EX.rs2) pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
-			case BLTU:if(ID_EX.rs1<ID_EX.rs2) pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
-			case BGEU:if(ID_EX.rs1>=ID_EX.rs2) pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
-
-			case JAL:EX_MEM.res=ID_EX._pc+4;pc=ID_EX._pc+ID_EX.imm,IF_ID.clear();break;
+			case JAL:EX_MEM.res=ID_EX._pc+4;break;
 			case JALR:EX_MEM.res=ID_EX._pc+4;pc=(ID_EX.rs1+ID_EX.imm)&~1,IF_ID.clear();break;//...
 
 			default:break;
@@ -419,6 +497,7 @@ public:
 	Simulator(){
 		memset(mem,0,sizeof(mem));
 		memset(X,0,sizeof(X));
+		tot=suc=0;
 		pc=0;
 	}
 	void init(){
@@ -451,7 +530,8 @@ public:
 			}
 			if(IF_ID.empty()) IF();
 		}
-		printf("%u",X[10]&255u);
+		printf("%u\n",X[10]&255u);
+		//printf("success rate:%d/%d=%.2lf\n",suc,tot,suc*1.0/tot);
 	}
 };
 #endif //CODE_SIMULATOR_HPP
